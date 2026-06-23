@@ -36,6 +36,9 @@ class Config:
     DEPTH: int = 3
     IN_CHANNELS: int = 2   # voided_image + mask
     OUT_CHANNELS: int = 1
+    # MonoUNet-inspired options (Kimbowa et al., arXiv:2604.07780)
+    MONO_STAGES: int = 3   # k: high-res encoder stages to inject local phase into; 0 = off
+    MONO_SCALES: int = 3   # M: log-Gabor scales per filter
 
     # ── Training ─────────────────────────────────────────────────────────────
     NUM_EPOCHS: int = 60

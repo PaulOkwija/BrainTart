@@ -68,6 +68,7 @@ def train_ddp(rank, world, train_ds, val_ds, cfg: Config, history):
     model = AttentionUNet3D(
         in_channels=cfg.IN_CHANNELS, out_channels=cfg.OUT_CHANNELS,
         base_ch=cfg.BASE_CHANNELS, depth=cfg.DEPTH,
+        mono_stages=cfg.MONO_STAGES, mono_scales=cfg.MONO_SCALES,
     ).to(dev)
     model = DDP(model, device_ids=[rank], find_unused_parameters=False)
 
@@ -218,6 +219,14 @@ def main():
         "--cache-dir", type=str, default="/kaggle/working/.patch_cache",
         help="Directory for pre-processed patch cache. Pass 'none' to disable.",
     )
+    parser.add_argument(
+        "--mono-stages", type=int, default=3,
+        help="MonoUNet: encoder stages to inject local phase into (0 = disabled).",
+    )
+    parser.add_argument(
+        "--mono-scales", type=int, default=3,
+        help="MonoUNet: log-Gabor scales per filter.",
+    )
     args = parser.parse_args()
 
     cfg = Config()
@@ -233,6 +242,8 @@ def main():
     cfg.RESULTS_DIR = Path(args.results_dir)
     cfg.OUTPUT_DIR = Path(args.output_dir)
     cfg.CACHE_DIR = None if args.cache_dir.lower() == "none" else Path(args.cache_dir)
+    cfg.MONO_STAGES = args.mono_stages
+    cfg.MONO_SCALES = args.mono_scales
     cfg.makedirs()
 
     random.seed(cfg.SEED)
