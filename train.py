@@ -214,6 +214,10 @@ def main():
     parser.add_argument("--checkpoint-dir", type=str, default="/kaggle/working/checkpoints")
     parser.add_argument("--results-dir", type=str, default="/kaggle/working/results")
     parser.add_argument("--output-dir", type=str, default="/kaggle/working/outputs")
+    parser.add_argument(
+        "--cache-dir", type=str, default="/kaggle/working/.patch_cache",
+        help="Directory for pre-processed patch cache. Pass 'none' to disable.",
+    )
     args = parser.parse_args()
 
     cfg = Config()
@@ -228,6 +232,7 @@ def main():
     cfg.CHECKPOINT_DIR = Path(args.checkpoint_dir)
     cfg.RESULTS_DIR = Path(args.results_dir)
     cfg.OUTPUT_DIR = Path(args.output_dir)
+    cfg.CACHE_DIR = None if args.cache_dir.lower() == "none" else Path(args.cache_dir)
     cfg.makedirs()
 
     random.seed(cfg.SEED)
@@ -238,6 +243,7 @@ def main():
     full_train_ds = BraTSTrainDataset(
         cfg.DATASET_ROOT, crop_shape=cfg.CROP_SHAPE,
         center_on_mask=cfg.CENTER_ON_MASK, augment=True,
+        cache_dir=cfg.CACHE_DIR,
     )
     n_train = int(len(full_train_ds) * cfg.TRAIN_SPLIT)
     n_val = len(full_train_ds) - n_train

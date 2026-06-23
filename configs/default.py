@@ -9,7 +9,7 @@ All hyperparameters in one place.  Import and override as needed:
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Tuple
+from typing import Optional, Tuple
 
 
 @dataclass
@@ -19,6 +19,7 @@ class Config:
     RESULTS_DIR: Path = Path("/kaggle/working/results")
     CHECKPOINT_DIR: Path = Path("/kaggle/working/checkpoints")
     OUTPUT_DIR: Path = Path("/kaggle/working/outputs")
+    CACHE_DIR: Optional[Path] = Path("/kaggle/working/.patch_cache")  # set to None to disable
 
     # ── Reproducibility ──────────────────────────────────────────────────────
     SEED: int = 2023
@@ -58,3 +59,5 @@ class Config:
         """Create output directories."""
         for d in [self.RESULTS_DIR, self.CHECKPOINT_DIR, self.OUTPUT_DIR]:
             d.mkdir(parents=True, exist_ok=True)
+        if self.CACHE_DIR is not None:
+            self.CACHE_DIR.mkdir(parents=True, exist_ok=True)
