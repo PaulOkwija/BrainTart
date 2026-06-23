@@ -81,10 +81,16 @@ class BraTSTrainDataset(Dataset):
         t1n_crop, mask_h_crop = random_crop(self.crop_shape, t1n_crop, mask_h_crop)
 
         if augment:
+            t1n_crop_np = t1n_crop.numpy() if isinstance(t1n_crop, torch.Tensor) else t1n_crop
+            mask_h_crop_np = mask_h_crop.numpy() if isinstance(mask_h_crop, torch.Tensor) else mask_h_crop
+            
             if random.random() > 0.5:
-                t1n_crop, mask_h_crop = elastic_deform_3d(t1n_crop, mask_h_crop)
-            t1n_crop = gamma_augment(t1n_crop)
-            t1n_crop, mask_h_crop = random_flip_3d(t1n_crop, mask_h_crop)
+                t1n_crop_np, mask_h_crop_np = elastic_deform_3d(t1n_crop_np, mask_h_crop_np)
+            t1n_crop_np = gamma_augment(t1n_crop_np)
+            t1n_crop_np, mask_h_crop_np = random_flip_3d(t1n_crop_np, mask_h_crop_np)
+            
+            t1n_crop = torch.tensor(t1n_crop_np.copy())
+            mask_h_crop = torch.tensor(mask_h_crop_np.copy())
 
         voided_crop = t1n_crop * (1.0 - mask_h_crop)
 
