@@ -200,13 +200,21 @@ class MonoBlock3D(nn.Module):
         return freq_mag, gd / freq_mag, gh / freq_mag, gw / freq_mag
 
     def _lgf(self, freq_mag: Tensor, omega0_m: Tensor, sigma_r: Tensor) -> Tensor:
-        """Isotropic 3-D log-Gabor filter; DC component forced to zero."""
+        """Isotropic 3-D log-Gabor filter; DC component forced to zero.
+
+        Note: the inplace ``H[0,0,0] = 0.0`` is intentionally applied to a
+        *detached* mask, not to H itself.  H depends on the learnable ``sigma_r``
+        (via ExpBackward), so any inplace write on H would corrupt the backward
+        graph and raise ``RuntimeError: modified by an inplace operation``.
+        """
         H = torch.exp(
             -(torch.log(freq_mag / omega0_m.clamp(min=1e-8)) ** 2)
             / (2.0 * sigma_r ** 2)
         )
-        H[0, 0, 0] = 0.0
-        return H
+        # Fresh tensor with no gradient history — safe to modify inplace.
+        dc_mask = torch.ones(H.shape, device=H.device, dtype=H.dtype)
+        dc_mask[0, 0, 0] = 0.0
+        return H * dc_mask
 
     # ── forward ───────────────────────────────────────────────────────────────
 
