@@ -1,0 +1,10 @@
+torch>=2.0.0
+torchvision
+torchmetrics>=1.0
+nibabel
+scipy
+tqdm
+matplotlib
+numpy
+synapseclient
+inpainting

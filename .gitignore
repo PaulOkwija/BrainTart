@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+checkpoints/
+results/
+outputs/
+*.nii.gz
+*.pt
+*.zip
+lightning_logs/
+wandb/
+.vscode/
+.idea/
