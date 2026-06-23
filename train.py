@@ -75,6 +75,8 @@ def train_ddp(rank, world, train_ds, val_ds, cfg: Config, history):
     scheduler = optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=cfg.NUM_EPOCHS, eta_min=cfg.LR * 0.01
     )
+    
+    scaler = torch.amp.GradScaler('cuda')
 
     start_epoch = 1
     best_val = float("inf")
@@ -85,6 +87,8 @@ def train_ddp(rank, world, train_ds, val_ds, cfg: Config, history):
         model.module.load_state_dict(ckpt["model"])
         optimizer.load_state_dict(ckpt["optimizer"])
         scheduler.load_state_dict(ckpt["scheduler"])
+        if "scaler" in ckpt:
+            scaler.load_state_dict(ckpt["scaler"])
         history.update(ckpt["history"])
         start_epoch = ckpt["epoch"] + 1
         best_val = min(history["val_loss"]) if history["val_loss"] else float("inf")
@@ -108,18 +112,22 @@ def train_ddp(rank, world, train_ds, val_ds, cfg: Config, history):
             mask = batch["healthy_mask"].float().to(dev, non_blocking=True)
 
             model_in = torch.cat([voided, mask], dim=1)
-            pred, ds_preds = model(model_in)
+            
+            with torch.amp.autocast('cuda'):
+                pred, ds_preds = model(model_in)
 
-            loss, logs = combined_loss(
-                pred, gt, mask, ds_preds,
-                lam_l1=cfg.LAMBDA_L1, lam_ssim=cfg.LAMBDA_SSIM,
-                lam_ds=(cfg.LAMBDA_DS1, cfg.LAMBDA_DS2),
-            )
+                loss, logs = combined_loss(
+                    pred, gt, mask, ds_preds,
+                    lam_l1=cfg.LAMBDA_L1, lam_ssim=cfg.LAMBDA_SSIM,
+                    lam_ds=(cfg.LAMBDA_DS1, cfg.LAMBDA_DS2),
+                )
 
             optimizer.zero_grad(set_to_none=True)
-            loss.backward()
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
             nn.utils.clip_grad_norm_(model.parameters(), cfg.GRAD_CLIP)
-            optimizer.step()
+            scaler.step(optimizer)
+            scaler.update()
 
             for k in epoch_loss:
                 epoch_loss[k] += logs.get(k, 0.0)
@@ -141,12 +149,14 @@ def train_ddp(rank, world, train_ds, val_ds, cfg: Config, history):
                     gt = batch["gt_image"].to(dev)
                     mask = batch["healthy_mask"].float().to(dev)
                     model_in = torch.cat([voided, mask], dim=1)
-                    pred, ds_preds = model(model_in)
-                    _, logs = combined_loss(
-                        pred, gt, mask, ds_preds,
-                        lam_l1=cfg.LAMBDA_L1, lam_ssim=cfg.LAMBDA_SSIM,
-                        lam_ds=(cfg.LAMBDA_DS1, cfg.LAMBDA_DS2),
-                    )
+                    
+                    with torch.amp.autocast('cuda'):
+                        pred, ds_preds = model(model_in)
+                        _, logs = combined_loss(
+                            pred, gt, mask, ds_preds,
+                            lam_l1=cfg.LAMBDA_L1, lam_ssim=cfg.LAMBDA_SSIM,
+                            lam_ds=(cfg.LAMBDA_DS1, cfg.LAMBDA_DS2),
+                        )
                     val_loss += logs["total"]
                     val_batches += 1
 
@@ -170,6 +180,7 @@ def train_ddp(rank, world, train_ds, val_ds, cfg: Config, history):
                     "model": model.module.state_dict(),
                     "optimizer": optimizer.state_dict(),
                     "scheduler": scheduler.state_dict(),
+                    "scaler": scaler.state_dict(),
                     "history": dict(history),
                     "config": {
                         "BASE_CHANNELS": cfg.BASE_CHANNELS,

@@ -65,12 +65,6 @@ class BraTSTrainDataset(Dataset):
         if max_v == 0:
             max_v = t1n_max if t1n_max > 0 else 1.0
 
-        if augment:
-            if random.random() > 0.5:
-                t1n, mask_h = elastic_deform_3d(t1n, mask_h)
-            t1n = gamma_augment(t1n)
-            t1n, mask_h = random_flip_3d(t1n, mask_h)
-
         mask_h = mask_h.astype(np.float32)
 
         if self.center_on_mask:
@@ -85,6 +79,12 @@ class BraTSTrainDataset(Dataset):
         mask_h_crop, _ = pad3d(self.crop_shape, mask_h_crop)
 
         t1n_crop, mask_h_crop = random_crop(self.crop_shape, t1n_crop, mask_h_crop)
+
+        if augment:
+            if random.random() > 0.5:
+                t1n_crop, mask_h_crop = elastic_deform_3d(t1n_crop, mask_h_crop)
+            t1n_crop = gamma_augment(t1n_crop)
+            t1n_crop, mask_h_crop = random_flip_3d(t1n_crop, mask_h_crop)
 
         voided_crop = t1n_crop * (1.0 - mask_h_crop)
 
