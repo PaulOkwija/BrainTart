@@ -273,14 +273,16 @@ class BraTSInferDataset(Dataset):
         self.center_on_mask = center_on_mask
 
         self.voided_paths = sorted(self.root_dir.rglob("**/BraTS-GLI-*-*-t1n-voided.nii.gz"))
-        self.mask_paths = sorted(self.root_dir.rglob("**/BraTS-GLI-*-*-mask.nii.gz"))
-        self.mask_paths = [
-            p for p in self.mask_paths
-            if "healthy" not in p.name and "unhealthy" not in p.name
-        ]
-        assert len(self.voided_paths) == len(self.mask_paths), (
-            f"voided={len(self.voided_paths)}, mask={len(self.mask_paths)}"
-        )
+        
+        self.mask_paths = []
+        for v in self.voided_paths:
+            case_id = v.name.replace("-t1n-voided.nii.gz", "")
+            mask_matches = list(self.root_dir.rglob(f"**/{case_id}-mask.nii.gz"))
+            mask_matches = [p for p in mask_matches if "healthy" not in p.name and "unhealthy" not in p.name]
+            if not mask_matches:
+                raise ValueError(f"Missing mask for {v}")
+            self.mask_paths.append(mask_matches[0])
+            
         print(f"[InferDataset] {len(self.voided_paths)} cases")
 
     def __len__(self) -> int:
@@ -319,7 +321,7 @@ class BraTSInferDataset(Dataset):
             mask_crop = mask_crop[..., :self.crop_shape[0], :self.crop_shape[1], :self.crop_shape[2]]
 
         voided_crop = normalize(voided_crop).unsqueeze(0)
-        mask_crop = mask_crop.unsqueeze(0).bool()
+        mask_crop = (mask_crop > 0.5).unsqueeze(0).bool()
 
         return {
             "voided_image": voided_crop,
