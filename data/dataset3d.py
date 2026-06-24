@@ -232,6 +232,8 @@ class BraTSTrainDataset(Dataset):
     @staticmethod
     def get_result_image(prediction: np.ndarray, sample: dict):
         """Reverse normalisation and crop; paste prediction into full volume."""
+        import scipy.ndimage as ndimage
+        
         t1n_img = nib.load(sample["t1n_path"])
         affine = t1n_img.affine
         t1n = t1n_img.get_fdata().astype(np.float32)
@@ -245,14 +247,21 @@ class BraTSTrainDataset(Dataset):
         mask_crop = sample["healthy_mask"][0]
         if isinstance(mask_crop, torch.Tensor):
             mask_crop = mask_crop.numpy()
-        pred_minimal = np.zeros_like(pred)
-        pred_minimal[mask_crop] = pred[mask_crop]
+            
+        # Create a feathered weight mask for smooth boundary blending
+        W = mask_crop.astype(np.float32)
+        W_blurred = ndimage.gaussian_filter(W, sigma=3.0)
+        W_blend = np.maximum(W, W_blurred)
 
         bb = eval(sample["cropped_bbox"])
-        pred_full = np.zeros_like(voided_full)
-        pred_full[bb] = pred_minimal
+        voided_crop = voided_full[bb]
+        
+        # Blend the prediction with the healthy tissue to hide sharp square edges
+        pred_blended = W_blend * pred + (1.0 - W_blend) * voided_crop
 
-        result = voided_full + pred_full
+        result = voided_full.copy()
+        result[bb] = pred_blended
+        
         img = nib.Nifti1Image(result, affine=affine, header=t1n_img.header)
         return result, img
 
@@ -337,7 +346,9 @@ class BraTSInferDataset(Dataset):
 
     @staticmethod
     def get_result_image(prediction: np.ndarray, sample: dict):
-        """Paste prediction into full-resolution voided volume."""
+        """Paste prediction into full-resolution voided volume with boundary blending."""
+        import scipy.ndimage as ndimage
+        
         voided_img = nib.load(sample["t1n_voided_path"])
         affine = voided_img.affine
         voided = voided_img.get_fdata().astype(np.float32)
@@ -350,13 +361,19 @@ class BraTSInferDataset(Dataset):
         if isinstance(mask_crop, torch.Tensor):
             mask_crop = mask_crop.numpy()
 
-        pred_minimal = np.zeros_like(pred)
-        pred_minimal[mask_crop] = pred[mask_crop]
+        # Create a feathered weight mask for smooth boundary blending
+        W = mask_crop.astype(np.float32)
+        W_blurred = ndimage.gaussian_filter(W, sigma=3.0)
+        W_blend = np.maximum(W, W_blurred)
 
         bb = eval(sample["cropped_bbox"])
-        pred_full = np.zeros_like(voided)
-        pred_full[bb] = pred_minimal
+        voided_crop = voided[bb]
 
-        result = voided + pred_full
+        # Blend the prediction with the healthy tissue to hide sharp square edges
+        pred_blended = W_blend * pred + (1.0 - W_blend) * voided_crop
+
+        result = voided.copy()
+        result[bb] = pred_blended
+        
         img = nib.Nifti1Image(result, affine=affine, header=voided_img.header)
         return result, img

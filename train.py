@@ -106,6 +106,7 @@ def train_ddp(rank, world, train_ds, val_ds, cfg: Config, history):
         base_ch=cfg.BASE_CHANNELS, depth=cfg.DEPTH,
         mono_stages=cfg.MONO_STAGES, mono_scales=cfg.MONO_SCALES,
         dropout_rate=cfg.DROPOUT_RATE,
+        use_trilinear_upsample=cfg.USE_TRILINEAR_UPSAMPLE,
     ).to(dev)
 
     if rank == 0:
@@ -248,6 +249,7 @@ def train_ddp(rank, world, train_ds, val_ds, cfg: Config, history):
                         "DROPOUT_RATE": cfg.DROPOUT_RATE,
                         "MONO_STAGES": cfg.MONO_STAGES,
                         "MONO_SCALES": cfg.MONO_SCALES,
+                        "USE_TRILINEAR_UPSAMPLE": cfg.USE_TRILINEAR_UPSAMPLE,
                     },
                 }, ckpt_path)
                 print(f"  Checkpoint saved: {ckpt_path.name}")

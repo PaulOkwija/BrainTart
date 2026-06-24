@@ -125,14 +125,17 @@ def combined_loss(
       + lam_ds[0] * L_ds0
       + lam_ds[1] * L_ds1
 
-    L1 and DS losses are computed only inside the mask region.
+    L1 and DS losses are computed inside the mask, with a small 0.1x penalty
+    outside the mask to enforce seamless boundary blending.
     SSIM is computed over the full patch (standard practice).
     Edge loss uses 3-D Sobel gradients inside the mask.
     Frequency loss compares FFT magnitude spectra globally.
     """
     m = mask.bool()
     if m.any():
-        l1 = F.l1_loss(pred[m], target[m])
+        l1_hole = F.l1_loss(pred[m], target[m])
+        l1_bg = F.l1_loss(pred[~m], target[~m]) if (~m).any() else 0.0
+        l1 = l1_hole + 0.1 * l1_bg
     else:
         l1 = F.l1_loss(pred, target)
 
@@ -155,7 +158,9 @@ def combined_loss(
 
     for i, (ds_pred, w) in enumerate(zip(ds_preds, lam_ds)):
         if m.any():
-            ds_l = F.l1_loss(ds_pred[m], target[m])
+            ds_l_hole = F.l1_loss(ds_pred[m], target[m])
+            ds_l_bg = F.l1_loss(ds_pred[~m], target[~m]) if (~m).any() else 0.0
+            ds_l = ds_l_hole + 0.1 * ds_l_bg
         else:
             ds_l = F.l1_loss(ds_pred, target)
         total = total + w * ds_l

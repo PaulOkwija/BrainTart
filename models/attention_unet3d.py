@@ -58,6 +58,7 @@ class AttentionUNet3D(nn.Module):
         mono_stages: int = 3,
         mono_scales: int = 3,
         dropout_rate: float = 0.0,
+        use_trilinear_upsample: bool = False,
     ):
         super().__init__()
         self.depth = depth
@@ -115,9 +116,17 @@ class AttentionUNet3D(nn.Module):
             F_l   = enc_chs[i]
             F_int = max(F_l // 2, 8)
 
-            self.up_convs.append(
-                nn.ConvTranspose3d(F_g, F_g, kernel_size=2, stride=2)
-            )
+            if use_trilinear_upsample:
+                self.up_convs.append(
+                    nn.Sequential(
+                        nn.Upsample(scale_factor=2, mode="trilinear", align_corners=False),
+                        nn.Conv3d(F_g, F_g, kernel_size=1, bias=False)
+                    )
+                )
+            else:
+                self.up_convs.append(
+                    nn.ConvTranspose3d(F_g, F_g, kernel_size=2, stride=2)
+                )
             self.att_gates.append(AttentionGate3D(F_g=F_g, F_l=F_l, F_int=F_int))
             # Single ConvBlock3D replaces ResBlock3D (no residual in decoder)
             self.dec_blocks.append(ConvBlock3D(F_g + F_l, F_l))

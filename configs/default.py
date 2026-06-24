@@ -41,6 +41,7 @@ class Config:
     MONO_SCALES: int = 3   # M: log-Gabor scales per filter
     # v2: MC-Dropout
     DROPOUT_RATE: float = 0.15  # spatial dropout probability in the bottleneck
+    USE_TRILINEAR_UPSAMPLE: bool = True # use Upsample + Conv3d instead of ConvTranspose3d to avoid checkerboard artifacts
 
     # -- Training -------------------------------------------------------------
     NUM_EPOCHS: int = 60

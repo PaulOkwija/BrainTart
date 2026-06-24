@@ -36,19 +36,28 @@ from data import BraTSInferDataset
 
 def load_model(checkpoint_path: Path, cfg: Config, device) -> AttentionUNet3D:
     """Load a trained AttentionUNet3D from checkpoint."""
+    state = torch.load(checkpoint_path, map_location=device)
+    
+    use_trilinear = cfg.USE_TRILINEAR_UPSAMPLE
+    if isinstance(state, dict) and "config" in state:
+        use_trilinear = state["config"].get("USE_TRILINEAR_UPSAMPLE", False)
+    elif isinstance(state, dict) and "model" in state:
+        # Older model without config key saved
+        use_trilinear = False
+
     model = AttentionUNet3D(
         in_channels=cfg.IN_CHANNELS, out_channels=cfg.OUT_CHANNELS,
         base_ch=cfg.BASE_CHANNELS, depth=cfg.DEPTH,
         mono_stages=cfg.MONO_STAGES, mono_scales=cfg.MONO_SCALES,
         dropout_rate=cfg.DROPOUT_RATE,
+        use_trilinear_upsample=use_trilinear,
     ).to(device)
 
-    state = torch.load(checkpoint_path, map_location=device)
     if isinstance(state, dict) and "model" in state:
         state = state["model"]
     model.load_state_dict(state)
     model.eval()
-    print(f"Loaded: {checkpoint_path}")
+    print(f"Loaded: {checkpoint_path} (Trilinear Upsample: {use_trilinear})")
     return model
 
 
