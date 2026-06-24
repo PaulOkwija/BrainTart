@@ -38,12 +38,15 @@ def load_model(checkpoint_path: Path, cfg: Config, device) -> AttentionUNet3D:
     """Load a trained AttentionUNet3D from checkpoint."""
     state = torch.load(checkpoint_path, map_location=device)
     
+    # best_model.pt is just a state_dict, while ckpt_epoch_*.pt has a "model" wrapper
+    model_state = state["model"] if (isinstance(state, dict) and "model" in state) else state
+
+    # Auto-detect legacy upsampling directly from the saved weights
     use_trilinear = cfg.USE_TRILINEAR_UPSAMPLE
-    if isinstance(state, dict) and "config" in state:
-        use_trilinear = state["config"].get("USE_TRILINEAR_UPSAMPLE", False)
-    elif isinstance(state, dict) and "model" in state:
-        # Older model without config key saved
+    if "up_convs.0.weight" in model_state:
         use_trilinear = False
+    elif "up_convs.0.1.weight" in model_state:
+        use_trilinear = True
 
     model = AttentionUNet3D(
         in_channels=cfg.IN_CHANNELS, out_channels=cfg.OUT_CHANNELS,
@@ -53,9 +56,7 @@ def load_model(checkpoint_path: Path, cfg: Config, device) -> AttentionUNet3D:
         use_trilinear_upsample=use_trilinear,
     ).to(device)
 
-    if isinstance(state, dict) and "model" in state:
-        state = state["model"]
-    model.load_state_dict(state)
+    model.load_state_dict(model_state)
     model.eval()
     print(f"Loaded: {checkpoint_path} (Trilinear Upsample: {use_trilinear})")
     return model
