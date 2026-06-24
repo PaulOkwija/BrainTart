@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""BrainTart — DDP training script for Attention U-Net 3D.
+"""BrainTart - DDP training script for Attention U-Net 3D.
+
+v2 additions:
+  - Linear warmup scheduler (WARMUP_EPOCHS) before cosine decay
+  - Gradient accumulation (GRAD_ACCUM_STEPS)
+  - Edge loss + frequency loss terms
+  - MC-Dropout via dropout_rate in the bottleneck
 
 Usage (Kaggle / 2x T4):
     python train.py --dataset /kaggle/working/brats_data --epochs 60
@@ -40,6 +46,36 @@ def count_params(model: nn.Module) -> int:
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
+def build_scheduler(optimizer, cfg: Config):
+    """Build warmup + cosine decay scheduler.
+
+    v2: Linear warmup from LR*0.01 → LR over WARMUP_EPOCHS, followed by
+    cosine annealing over the remaining epochs.  If WARMUP_EPOCHS == 0,
+    falls back to pure CosineAnnealingLR (identical to v1).
+    """
+    if cfg.WARMUP_EPOCHS > 0:
+        warmup = optim.lr_scheduler.LinearLR(
+            optimizer,
+            start_factor=0.01,
+            end_factor=1.0,
+            total_iters=cfg.WARMUP_EPOCHS,
+        )
+        cosine = optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=cfg.NUM_EPOCHS - cfg.WARMUP_EPOCHS,
+            eta_min=cfg.LR * 0.01,
+        )
+        return optim.lr_scheduler.SequentialLR(
+            optimizer,
+            schedulers=[warmup, cosine],
+            milestones=[cfg.WARMUP_EPOCHS],
+        )
+    else:
+        return optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=cfg.NUM_EPOCHS, eta_min=cfg.LR * 0.01
+        )
+
+
 def train_ddp(rank, world, train_ds, val_ds, cfg: Config, history):
     """DDP training worker. rank=0 handles checkpointing and visualisation."""
     dist.init_process_group(
@@ -69,14 +105,23 @@ def train_ddp(rank, world, train_ds, val_ds, cfg: Config, history):
         in_channels=cfg.IN_CHANNELS, out_channels=cfg.OUT_CHANNELS,
         base_ch=cfg.BASE_CHANNELS, depth=cfg.DEPTH,
         mono_stages=cfg.MONO_STAGES, mono_scales=cfg.MONO_SCALES,
+        dropout_rate=cfg.DROPOUT_RATE,
     ).to(dev)
+
+    if rank == 0:
+        print(f"Model parameters: {count_params(model):,}")
+        print(f"Dropout rate: {cfg.DROPOUT_RATE}")
+        print(f"Warmup epochs: {cfg.WARMUP_EPOCHS}")
+        print(f"Gradient accumulation steps: {cfg.GRAD_ACCUM_STEPS}")
+        print(f"Effective batch size: {cfg.BATCH_PER_GPU * cfg.GRAD_ACCUM_STEPS * world}")
+        print(f"Loss weights - L1:{cfg.LAMBDA_L1} SSIM:{cfg.LAMBDA_SSIM} "
+              f"Edge:{cfg.LAMBDA_EDGE} Freq:{cfg.LAMBDA_FREQ}")
+
     model = DDP(model, device_ids=[rank], find_unused_parameters=False)
 
     optimizer = optim.AdamW(model.parameters(), lr=cfg.LR, weight_decay=cfg.WEIGHT_DECAY)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=cfg.NUM_EPOCHS, eta_min=cfg.LR * 0.01
-    )
-    
+    scheduler = build_scheduler(optimizer, cfg)
+
     scaler = torch.amp.GradScaler('cuda')
 
     start_epoch = 1
@@ -96,6 +141,8 @@ def train_ddp(rank, world, train_ds, val_ds, cfg: Config, history):
         if rank == 0:
             print(f"Resumed from {ckpt_files[-1].name} (epoch {ckpt['epoch']})")
 
+    accum = cfg.GRAD_ACCUM_STEPS
+
     for epoch in range(start_epoch, cfg.NUM_EPOCHS + 1):
         train_sampler.set_epoch(epoch)
         model.train()
@@ -107,28 +154,37 @@ def train_ddp(rank, world, train_ds, val_ds, cfg: Config, history):
             train_loader, desc=f"[GPU{rank}] Ep {epoch}/{cfg.NUM_EPOCHS}",
             leave=False, disable=(rank != 0),
         )
-        for batch in pbar:
+
+        optimizer.zero_grad(set_to_none=True)
+
+        for step, batch in enumerate(pbar):
             voided = batch["voided_healthy_image"].to(dev, non_blocking=True)
             gt = batch["gt_image"].to(dev, non_blocking=True)
             mask = batch["healthy_mask"].float().to(dev, non_blocking=True)
 
             model_in = torch.cat([voided, mask], dim=1)
-            
+
             with torch.amp.autocast('cuda'):
                 pred, ds_preds = model(model_in)
 
                 loss, logs = combined_loss(
                     pred, gt, mask, ds_preds,
                     lam_l1=cfg.LAMBDA_L1, lam_ssim=cfg.LAMBDA_SSIM,
+                    lam_edge=cfg.LAMBDA_EDGE, lam_freq=cfg.LAMBDA_FREQ,
                     lam_ds=(cfg.LAMBDA_DS1, cfg.LAMBDA_DS2),
                 )
+                # Scale loss by accumulation steps so gradient magnitudes
+                # are equivalent to a larger effective batch
+                loss = loss / accum
 
-            optimizer.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
-            scaler.unscale_(optimizer)
-            nn.utils.clip_grad_norm_(model.parameters(), cfg.GRAD_CLIP)
-            scaler.step(optimizer)
-            scaler.update()
+
+            if (step + 1) % accum == 0 or (step + 1) == len(train_loader):
+                scaler.unscale_(optimizer)
+                nn.utils.clip_grad_norm_(model.parameters(), cfg.GRAD_CLIP)
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad(set_to_none=True)
 
             for k in epoch_loss:
                 epoch_loss[k] += logs.get(k, 0.0)
@@ -150,12 +206,13 @@ def train_ddp(rank, world, train_ds, val_ds, cfg: Config, history):
                     gt = batch["gt_image"].to(dev)
                     mask = batch["healthy_mask"].float().to(dev)
                     model_in = torch.cat([voided, mask], dim=1)
-                    
+
                     with torch.amp.autocast('cuda'):
                         pred, ds_preds = model(model_in)
                         _, logs = combined_loss(
                             pred, gt, mask, ds_preds,
                             lam_l1=cfg.LAMBDA_L1, lam_ssim=cfg.LAMBDA_SSIM,
+                            lam_edge=cfg.LAMBDA_EDGE, lam_freq=cfg.LAMBDA_FREQ,
                             lam_ds=(cfg.LAMBDA_DS1, cfg.LAMBDA_DS2),
                         )
                     val_loss += logs["total"]
@@ -188,6 +245,9 @@ def train_ddp(rank, world, train_ds, val_ds, cfg: Config, history):
                         "DEPTH": cfg.DEPTH,
                         "CROP_SHAPE": cfg.CROP_SHAPE,
                         "IN_CHANNELS": cfg.IN_CHANNELS,
+                        "DROPOUT_RATE": cfg.DROPOUT_RATE,
+                        "MONO_STAGES": cfg.MONO_STAGES,
+                        "MONO_SCALES": cfg.MONO_SCALES,
                     },
                 }, ckpt_path)
                 print(f"  Checkpoint saved: {ckpt_path.name}")
@@ -227,6 +287,12 @@ def main():
         "--mono-scales", type=int, default=3,
         help="MonoUNet: log-Gabor scales per filter.",
     )
+    # v2 arguments
+    parser.add_argument("--dropout", type=float, default=0.15, help="Bottleneck dropout rate (0 = disabled)")
+    parser.add_argument("--warmup", type=int, default=3, help="Linear warmup epochs")
+    parser.add_argument("--accum", type=int, default=2, help="Gradient accumulation steps")
+    parser.add_argument("--lam-edge", type=float, default=0.25, help="Edge loss weight")
+    parser.add_argument("--lam-freq", type=float, default=0.1, help="Frequency loss weight")
     args = parser.parse_args()
 
     cfg = Config()
@@ -244,6 +310,12 @@ def main():
     cfg.CACHE_DIR = None if args.cache_dir.lower() == "none" else Path(args.cache_dir)
     cfg.MONO_STAGES = args.mono_stages
     cfg.MONO_SCALES = args.mono_scales
+    # v2
+    cfg.DROPOUT_RATE = args.dropout
+    cfg.WARMUP_EPOCHS = args.warmup
+    cfg.GRAD_ACCUM_STEPS = args.accum
+    cfg.LAMBDA_EDGE = args.lam_edge
+    cfg.LAMBDA_FREQ = args.lam_freq
     cfg.makedirs()
 
     random.seed(cfg.SEED)
@@ -277,7 +349,7 @@ def main():
         print(f"Launching DDP training on {n_gpus} GPUs...")
         mp.spawn(train_ddp, args=(n_gpus, train_ds, val_ds, cfg, history), nprocs=n_gpus, join=True)
     elif n_gpus == 1:
-        print("Single GPU — running without DDP wrapper...")
+        print("Single GPU - running without DDP wrapper...")
         train_ddp(0, 1, train_ds, val_ds, cfg, history)
     else:
         raise RuntimeError("No CUDA GPUs found.")

@@ -11,6 +11,11 @@ Architecture:
   - Deep supervision at two decoder levels
   - GroupNorm throughout (safe for small batch sizes)
 
+v2 additions:
+  - Dropout3d in the bottleneck for MC-dropout ensembling at inference
+  - mc_inference() method for uncertainty-aware prediction
+  - test-time flip augmentation (TTA)
+
 References
 ----------
 - Kimbowa et al., "MonoUNet", arXiv:2604.07780
@@ -29,8 +34,8 @@ from .blocks import (
 
 class AttentionUNet3D(nn.Module):
     """
-    Forward input  : (B, 2, D, H, W)  — [voided | mask]
-    Forward output : (B, 1, D, H, W)  — tanh predicted reconstruction
+    Forward input  : (B, 2, D, H, W)  - [voided | mask]
+    Forward output : (B, 1, D, H, W)  - tanh predicted reconstruction
                      + list of deep-supervision tensors (same spatial size)
 
     Parameters
@@ -39,8 +44,9 @@ class AttentionUNet3D(nn.Module):
     out_channels : number of output channels
     base_ch      : channel count at the first encoder stage
     depth        : number of encoder downsampling stages
-    mono_stages  : k — encoder stages to inject local phase into; 0 = disabled
-    mono_scales  : M — log-Gabor scales per filter
+    mono_stages  : k - encoder stages to inject local phase into; 0 = disabled
+    mono_scales  : M - log-Gabor scales per filter
+    dropout_rate : spatial dropout probability in the bottleneck (0 = disabled)
     """
 
     def __init__(
@@ -51,16 +57,18 @@ class AttentionUNet3D(nn.Module):
         depth: int = 3,
         mono_stages: int = 3,
         mono_scales: int = 3,
+        dropout_rate: float = 0.0,
     ):
         super().__init__()
         self.depth = depth
+        self.dropout_rate = dropout_rate
 
         # Clamp: at most (init_conv + depth enc_blocks) stages exist
         self.n_mono = min(mono_stages, depth + 1)
 
         enc_chs = [base_ch * (2 ** i) for i in range(depth + 1)]
 
-        # ── MonoUNet: local phase extractor + gated encoder injection ─────────
+        # -- MonoUNet: local phase extractor + gated encoder injection ---------
         if self.n_mono > 0:
             self.mono_block = MonoBlock3D(
                 in_channels, k=self.n_mono, M=mono_scales
@@ -73,22 +81,28 @@ class AttentionUNet3D(nn.Module):
             self.mono_block = None
             self.mono_gates = nn.ModuleList()
 
-        # ── Initial projection ───────────────────────────────────────────────
+        # -- Initial projection -----------------------------------------------
         self.init_conv = ResBlock3D(in_channels, enc_chs[0])
 
-        # ── Encoder ──────────────────────────────────────────────────────────
+        # -- Encoder ----------------------------------------------------------
         self.enc_blocks = nn.ModuleList()
         for i in range(depth):
             self.enc_blocks.append(ResBlock3D(enc_chs[i], enc_chs[i + 1], stride=2))
 
-        # ── Bottleneck ───────────────────────────────────────────────────────
-        self.bottleneck = nn.Sequential(
+        # -- Bottleneck -------------------------------------------------------
+        # v2: Dropout3d inserted between self-attention and the second ResBlock.
+        # During MC-dropout inference, this stays enabled to produce stochastic
+        # predictions whose mean is the ensemble output.
+        bottleneck_layers = [
             ResBlock3D(enc_chs[depth], enc_chs[depth]),
             SelfAttention3D(enc_chs[depth], heads=4),
-            ResBlock3D(enc_chs[depth], enc_chs[depth]),
-        )
+        ]
+        if dropout_rate > 0.0:
+            bottleneck_layers.append(nn.Dropout3d(p=dropout_rate))
+        bottleneck_layers.append(ResBlock3D(enc_chs[depth], enc_chs[depth]))
+        self.bottleneck = nn.Sequential(*bottleneck_layers)
 
-        # ── Decoder ── MonoUNet asymmetric: one ConvBlock3D per stage ─────────
+        # -- Decoder -- MonoUNet asymmetric: one ConvBlock3D per stage ---------
         # Original uses two ResBlock3D (2 conv + residual each).
         # MonoUNet Table 5: halving decoder blocks → no accuracy loss, ~40%
         # parameter reduction in the decoder.
@@ -108,11 +122,11 @@ class AttentionUNet3D(nn.Module):
             # Single ConvBlock3D replaces ResBlock3D (no residual in decoder)
             self.dec_blocks.append(ConvBlock3D(F_g + F_l, F_l))
 
-        # ── Main output head ─────────────────────────────────────────────────
+        # -- Main output head -------------------------------------------------
         self.out_norm = nn.GroupNorm(min(8, enc_chs[0]), enc_chs[0])
         self.out_conv = nn.Conv3d(enc_chs[0], out_channels, 1)
 
-        # ── Deep supervision heads ───────────────────────────────────────────
+        # -- Deep supervision heads -------------------------------------------
         self.ds_heads = nn.ModuleList()
         for k in range(min(2, depth)):
             ch = enc_chs[depth - 1 - k]
@@ -121,11 +135,11 @@ class AttentionUNet3D(nn.Module):
     def forward(self, x: Tensor):
         target_size = x.shape[-3:]
 
-        # ── Local phase features (computed once; reused across all gates) ─────
+        # -- Local phase features (computed once; reused across all gates) -----
         # MonoBlock3D runs inside autocast-safe float32 internally.
         phase = self.mono_block(x) if self.mono_block is not None else None
 
-        # ── Encoder ──────────────────────────────────────────────────────────
+        # -- Encoder ----------------------------------------------------------
         x0 = self.init_conv(x)
         if phase is not None and 0 < self.n_mono:
             x0 = self.mono_gates[0](phase, x0)          # inject into stage 0
@@ -139,10 +153,10 @@ class AttentionUNet3D(nn.Module):
                 xi = self.mono_gates[gate_idx](phase, xi)  # inject into stages 1..k-1
             skips.append(xi)
 
-        # ── Bottleneck ───────────────────────────────────────────────────────
+        # -- Bottleneck -------------------------------------------------------
         xi = self.bottleneck(skips[-1])
 
-        # ── Decoder ──────────────────────────────────────────────────────────
+        # -- Decoder ----------------------------------------------------------
         ds_outputs = []
         for k, (up, ag, dec) in enumerate(
             zip(self.up_convs, self.att_gates, self.dec_blocks)
@@ -161,3 +175,68 @@ class AttentionUNet3D(nn.Module):
 
         out = torch.tanh(self.out_conv(F.silu(self.out_norm(xi))))
         return out, ds_outputs
+
+    # -- v2: MC-Dropout Inference ---------------------------------------------
+
+    @torch.no_grad()
+    def mc_inference(
+        self,
+        x: Tensor,
+        n_samples: int = 8,
+        use_tta_flips: bool = True,
+    ) -> Tensor:
+        """Monte-Carlo dropout ensemble prediction.
+
+        Runs *n_samples* stochastic forward passes with dropout enabled,
+        then averages the predictions.  Optionally includes test-time
+        augmentation (TTA) via axis flips.
+
+        Parameters
+        ----------
+        x           : (B, C, D, H, W) model input
+        n_samples   : number of stochastic forward passes
+        use_tta_flips : if True, also average predictions over 3-axis flips
+
+        Returns
+        -------
+        mean_pred : (B, 1, D, H, W) averaged prediction
+        std_pred  : (B, 1, D, H, W) voxel-wise uncertainty (std)
+        """
+        was_training = self.training
+
+        # Enable dropout but keep BatchNorm/GroupNorm in eval mode
+        self.eval()
+        # Re-enable only Dropout layers
+        for m in self.modules():
+            if isinstance(m, (nn.Dropout, nn.Dropout2d, nn.Dropout3d)):
+                m.train()
+
+        preds = []
+
+        # Define flip configurations: (dims_to_flip,)
+        # Empty tuple = no flip
+        if use_tta_flips:
+            flip_configs = [(), (-3,), (-2,), (-1,)]
+        else:
+            flip_configs = [()]
+
+        for _ in range(n_samples):
+            for flip_dims in flip_configs:
+                x_aug = torch.flip(x, dims=flip_dims) if flip_dims else x
+                pred, _ = self.forward(x_aug)
+                # Flip prediction back
+                if flip_dims:
+                    pred = torch.flip(pred, dims=flip_dims)
+                preds.append(pred)
+
+        stacked = torch.stack(preds, dim=0)  # (N, B, 1, D, H, W)
+        mean_pred = stacked.mean(dim=0)
+        std_pred = stacked.std(dim=0)
+
+        # Restore original training state
+        if was_training:
+            self.train()
+        else:
+            self.eval()
+
+        return mean_pred, std_pred

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""BrainTart — Local evaluation mirroring the Synapse server script.
+"""BrainTart - Local evaluation mirroring the Synapse server script.
 
 Metrics: SSIM, PSNR, MSE  (via inpainting.challenge_metrics_2023.generate_metrics)
 

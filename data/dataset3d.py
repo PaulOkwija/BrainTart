@@ -1,12 +1,12 @@
 """3-D Datasets for BraTS 2026 inpainting challenge.
 
-Training : t1n.nii.gz  + mask-healthy.nii.gz  — model trains on healthy inpainting.
-Inference: t1n-voided.nii.gz + mask.nii.gz     — combined mask, no GT.
+Training : t1n.nii.gz  + mask-healthy.nii.gz  - model trains on healthy inpainting.
+Inference: t1n-voided.nii.gz + mask.nii.gz     - combined mask, no GT.
 
-Normalisation constant: max(t1n_voided) — matches Synapse evaluation script.
+Normalisation constant: max(t1n_voided) - matches Synapse evaluation script.
 
 Patch caching
-─────────────
+-------------
 The deterministic preprocessing steps (NIfTI load → normalise → bbox crop →
 pad3d) are cached once per sample as a small .npz file (≈0.3 MB each vs the
 ≈54 MB raw volume).  Subsequent epochs skip decompression entirely and only
@@ -64,7 +64,7 @@ class BraTSTrainDataset(Dataset):
     def __len__(self) -> int:
         return len(self.t1n_paths)
 
-    # ── Cache helpers ────────────────────────────────────────────────────────
+    # -- Cache helpers --------------------------------------------------------
 
     def _cache_key(self, idx: int) -> str:
         """Stable hash that encodes sample identity + crop settings."""
@@ -78,11 +78,11 @@ class BraTSTrainDataset(Dataset):
         """Return the deterministic (pre-random_crop) patch, using disk cache when available.
 
         Cached fields
-        ─────────────
+        -------------
         t1n_padded   : float32 array ≥ crop_shape  (the normalised full t1n)
         mask_padded  : float32 array ≥ crop_shape
-        t1n_max      : scalar — used for result reconstruction
-        max_v        : scalar — used for result reconstruction
+        t1n_max      : scalar - used for result reconstruction
+        max_v        : scalar - used for result reconstruction
         crop_bbox_*  : the three slice start/stop ints (slices aren't numpy-serialisable)
         """
         if self.cache_dir is not None:
@@ -99,7 +99,7 @@ class BraTSTrainDataset(Dataset):
                 )
                 return t1n_padded, mask_padded, t1n_max, max_v, crop_bbox
 
-        # ── Build from raw NIfTI ─────────────────────────────────────────────
+        # -- Build from raw NIfTI ---------------------------------------------
         t1n = nib.load(self.t1n_paths[idx]).get_fdata().astype(np.float32)
         mask_h = nib.load(self.mask_h_paths[idx]).get_fdata().astype(np.float32)
 
@@ -147,7 +147,7 @@ class BraTSTrainDataset(Dataset):
 
         return t1n_padded, mask_padded, t1n_max, max_v, crop_bbox
 
-    # ── Preprocessing ────────────────────────────────────────────────────────
+    # -- Preprocessing --------------------------------------------------------
 
     def _apply_stochastic(self, t1n_padded, mask_padded, augment: bool):
         """random_crop + augmentation on the already-padded patch tensors."""
@@ -258,7 +258,7 @@ class BraTSTrainDataset(Dataset):
 
 
 class BraTSInferDataset(Dataset):
-    """Inference dataset — no GT, uses t1n-voided + mask."""
+    """Inference dataset - no GT, uses t1n-voided + mask."""
 
     REFERENCE_SHAPE = (240, 240, 155)
 

@@ -1,4 +1,4 @@
-# BrainTart — Attention U-Net 3D for BraTS 2026 Inpainting
+# BrainTart - Attention U-Net 3D for BraTS 2026 Inpainting
 
 3D U-Net with attention gates, self-attention bottleneck, and deep supervision for the [BraTS 2026 Local Synthesis (Inpainting) Challenge](https://challenges.synapse.org/Challenges/DetailsPage/Task4?id=syn74274097).
 
@@ -17,26 +17,26 @@
 
 ```
 BrainTart/
-├── configs/
-│   └── default.py          # All hyperparameters
-├── data/
-│   └── dataset3d.py        # Training + Inference datasets
-├── models/
-│   ├── blocks.py           # ResBlock3D, AttentionGate3D, SelfAttention3D
-│   └── attention_unet3d.py # Main model
-├── losses/
-│   └── combined_loss.py    # Masked L1 + SSIM + deep supervision
-├── utils/
-│   ├── preprocessing.py    # bbox, pad, crop, normalize
-│   ├── augmentation.py     # elastic deform, gamma, flips
-│   └── visualization.py    # training diagnostics
-├── train.py                # DDP training entry point
-├── inference.py            # Submission NIfTI generation
-├── evaluate.py             # Local evaluation (mirrors Synapse)
-├── notebooks/
-│   └── run_braintart.ipynb # One-click Kaggle notebook
-├── requirements.txt
-└── README.md
+├-- configs/
+|   └-- default.py          # All hyperparameters
+├-- data/
+|   └-- dataset3d.py        # Training + Inference datasets
+├-- models/
+|   ├-- blocks.py           # ResBlock3D, AttentionGate3D, SelfAttention3D
+|   └-- attention_unet3d.py # Main model
+├-- losses/
+|   └-- combined_loss.py    # Masked L1 + SSIM + deep supervision
+├-- utils/
+|   ├-- preprocessing.py    # bbox, pad, crop, normalize
+|   ├-- augmentation.py     # elastic deform, gamma, flips
+|   └-- visualization.py    # training diagnostics
+├-- train.py                # DDP training entry point
+├-- inference.py            # Submission NIfTI generation
+├-- evaluate.py             # Local evaluation (mirrors Synapse)
+├-- notebooks/
+|   └-- run_braintart.ipynb # One-click Kaggle notebook
+├-- requirements.txt
+└-- README.md
 ```
 
 ## Quick Start
@@ -71,7 +71,7 @@ python evaluate.py \
 
 ### Kaggle Notebook
 
-Open `notebooks/run_braintart.ipynb` — it clones this repo, downloads data via Synapse, and runs the full pipeline.
+Open `notebooks/run_braintart.ipynb` - it clones this repo, downloads data via Synapse, and runs the full pipeline.
 
 ## Submission Format
 

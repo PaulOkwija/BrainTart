@@ -92,7 +92,7 @@ def plot_loss_curve(history: dict, save_path: Path):
     ax.plot(history["epoch"], history["val_loss"], label="val", color="coral")
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Loss (L1 + SSIM + DS)")
-    ax.set_title("Attention U-Net 3D — Training Curve")
+    ax.set_title("Attention U-Net 3D - Training Curve")
     ax.legend()
     ax.grid(True, alpha=0.3)
     plt.tight_layout()

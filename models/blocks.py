@@ -115,12 +115,12 @@ class DeepSupHead(nn.Module):
         return out
 
 
-# ── MonoUNet-inspired blocks ─────────────────────────────────────────────────
+# -- MonoUNet-inspired blocks -------------------------------------------------
 # Reference: Kimbowa et al., "MonoUNet", arXiv:2604.07780
 
 
 class ConvBlock3D(nn.Module):
-    """Single-conv decoder block — MonoUNet asymmetric decoder design.
+    """Single-conv decoder block - MonoUNet asymmetric decoder design.
 
     Replaces ``ResBlock3D`` in the decoder with one Conv3d + GroupNorm + SiLU
     (no residual path).  MonoUNet's ablation (Table 5) shows this halves
@@ -151,14 +151,14 @@ class MonoBlock3D(nn.Module):
            even part and three odd parts (depth, height, width directions).
         3. Local phase  θ = atan2(||odd||, even)  is computed per scale.
         4. A 1×1×1 conv combines all k·M·C phase maps into k output feature
-           maps — one per encoder injection stage.
+           maps - one per encoder injection stage.
 
     Local phase is structurally invariant to intensity rescaling, making it
     robust to inter-scanner and inter-subject MRI intensity variations.
 
     Parameters
     ----------
-    in_channels : C  — input image channels
+    in_channels : C  - input image channels
     k           : number of encoder stages to inject phase into
     M           : log-Gabor scales per filter  (paper default: 3)
     """
@@ -169,7 +169,7 @@ class MonoBlock3D(nn.Module):
         self.k = k
         self.M = M
 
-        # Learnable LGF parameters — one set per injection stage.
+        # Learnable LGF parameters - one set per injection stage.
         # Initialised to standard log-Gabor defaults from the literature:
         #   omega0 ≈ 0.4 (mid-band), sigma_r ≈ 0.65, r ≈ 2.0
         self.log_omega0  = nn.Parameter(torch.full((k,), math.log(0.4)))
@@ -181,7 +181,7 @@ class MonoBlock3D(nn.Module):
         nn.init.kaiming_normal_(self.combine.weight, nonlinearity='linear')
         nn.init.zeros_(self.combine.bias)
 
-    # ── private helpers ───────────────────────────────────────────────────────
+    # -- private helpers -------------------------------------------------------
 
     @staticmethod
     def _freq_grid(D: int, H: int, W: int, device):
@@ -189,8 +189,8 @@ class MonoBlock3D(nn.Module):
 
         Returns
         -------
-        freq_mag : (D, H, W//2+1)  — isotropic frequency magnitude
-        r_d, r_h, r_w             — unit-vector components (Riesz filters)
+        freq_mag : (D, H, W//2+1)  - isotropic frequency magnitude
+        r_d, r_h, r_w             - unit-vector components (Riesz filters)
         """
         fd = torch.fft.fftfreq(D, device=device)   # (-0.5 … +0.5)
         fh = torch.fft.fftfreq(H, device=device)
@@ -211,29 +211,29 @@ class MonoBlock3D(nn.Module):
             -(torch.log(freq_mag / omega0_m.clamp(min=1e-8)) ** 2)
             / (2.0 * sigma_r ** 2)
         )
-        # Fresh tensor with no gradient history — safe to modify inplace.
+        # Fresh tensor with no gradient history - safe to modify inplace.
         dc_mask = torch.ones(H.shape, device=H.device, dtype=H.dtype)
         dc_mask[0, 0, 0] = 0.0
         return H * dc_mask
 
-    # ── forward ───────────────────────────────────────────────────────────────
+    # -- forward ---------------------------------------------------------------
 
     def forward(self, x: Tensor) -> Tensor:
         """
         Parameters
         ----------
-        x : (B, C, D, H, W)  — input image (any dtype)
+        x : (B, C, D, H, W)  - input image (any dtype)
 
         Returns
         -------
-        (B, k, D, H, W)  — local phase features at full input resolution
+        (B, k, D, H, W)  - local phase features at full input resolution
         """
         B, C, D, H, W = x.shape
         dev = x.device
 
         freq_mag, r_d, r_h, r_w = self._freq_grid(D, H, W, dev)
 
-        # FFT requires float32 — cast explicitly so AMP (float16) is safe.
+        # FFT requires float32 - cast explicitly so AMP (float16) is safe.
         x32 = x.float()
         Xf = torch.fft.rfftn(x32, dim=(-3, -2, -1))   # (B, C, D, H, W//2+1)
 
@@ -282,7 +282,7 @@ class MonoGate3D(nn.Module):
 
         out = enc_feat + sigmoid(α) · proj(phase)
 
-    α is zero-initialised so the gate starts as a pure identity — training
+    α is zero-initialised so the gate starts as a pure identity - training
     is numerically identical to the no-Mono baseline at step 0.
 
     Parameters
