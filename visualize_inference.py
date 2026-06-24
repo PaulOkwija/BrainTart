@@ -25,6 +25,10 @@ def plot_inference_sample(voided_path: Path, mask_path: Path, pred_path: Path, o
     # Load NIfTI volumes
     voided = nib.load(voided_path).get_fdata().astype(np.float32)
     mask = nib.load(mask_path).get_fdata().astype(np.float32)
+    
+    # Refine mask to the exact missing region (in case the provided mask is a bounding box)
+    mask = ((voided == 0.0) & (mask > 0.5)).astype(np.float32)
+    
     pred = nib.load(pred_path).get_fdata().astype(np.float32)
 
     # Find the axial slice (Z-axis) with the most mask pixels

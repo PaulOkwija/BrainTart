@@ -320,8 +320,11 @@ class BraTSInferDataset(Dataset):
             voided_crop = voided_crop[..., :self.crop_shape[0], :self.crop_shape[1], :self.crop_shape[2]]
             mask_crop = mask_crop[..., :self.crop_shape[0], :self.crop_shape[1], :self.crop_shape[2]]
 
+        # Refine mask to the exact missing region (in case the provided mask is a bounding box)
+        exact_mask_crop = (voided_crop == 0.0) & (mask_crop > 0.5)
+
         voided_crop = normalize(voided_crop).unsqueeze(0)
-        mask_crop = (mask_crop > 0.5).unsqueeze(0).bool()
+        mask_crop = exact_mask_crop.unsqueeze(0).bool()
 
         return {
             "voided_image": voided_crop,
