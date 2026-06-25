@@ -311,9 +311,13 @@ class BraTSInferDataset(Dataset):
 
         voided_crop = voided[bbox]
         mask_crop = mask[bbox]
+        
+        # In validation, mask.nii.gz is often a bounding box. The model expects an exact void mask.
+        # We derive the exact void by taking the 0-values inside the provided mask.
+        exact_mask_crop = (voided_crop == 0) & (mask_crop > 0.5)
 
         voided_crop, crop_bbox = pad3d(self.crop_shape, voided_crop, bbox)
-        mask_crop, _ = pad3d(self.crop_shape, mask_crop)
+        mask_crop, _ = pad3d(self.crop_shape, exact_mask_crop.astype(np.float32))
 
         # Deterministic trim for inference (no random_crop)
         if any(voided_crop.shape[-3 + i] > self.crop_shape[i] for i in range(3)):
@@ -321,7 +325,9 @@ class BraTSInferDataset(Dataset):
             mask_crop = mask_crop[..., :self.crop_shape[0], :self.crop_shape[1], :self.crop_shape[2]]
 
         voided_crop = normalize(voided_crop).unsqueeze(0)
-        mask_crop = (mask_crop > 0.5).unsqueeze(0).bool()
+        # Convert exactly like before, but now mask_crop is the exact void
+        mask_crop = (mask_crop > 0.5).clone().detach() if isinstance(mask_crop, torch.Tensor) else torch.tensor(mask_crop > 0.5)
+        mask_crop = mask_crop.unsqueeze(0).bool()
 
         return {
             "voided_image": voided_crop,
