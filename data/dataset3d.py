@@ -277,8 +277,7 @@ class BraTSInferDataset(Dataset):
         self.mask_paths = []
         for v in self.voided_paths:
             case_id = v.name.replace("-t1n-voided.nii.gz", "")
-            mask_matches = list(self.root_dir.rglob(f"**/{case_id}-mask.nii.gz"))
-            mask_matches = [p for p in mask_matches if "healthy" not in p.name and "unhealthy" not in p.name]
+            mask_matches = list(self.root_dir.rglob(f"**/{case_id}-mask-healthy.nii.gz"))
             if not mask_matches:
                 raise ValueError(f"Missing mask for {v}")
             self.mask_paths.append(mask_matches[0])

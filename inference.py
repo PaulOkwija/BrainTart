@@ -61,7 +61,7 @@ def run_inference(model, dataset_path: Path, results_dir: Path, device, crop_sha
             "t1n_voided_path": batch["t1n_voided_path"][0],
             "cropped_bbox": batch["cropped_bbox"][0],
             "max_v": batch["max_v"].item(),
-            "mask": batch["mask"].squeeze(0).cpu(),
+            "mask": batch["mask"].squeeze(0).bool().cpu(),
         }
         result, img = BraTSInferDataset.get_result_image(pred_np, sample_meta)
 

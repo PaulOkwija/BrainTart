@@ -106,10 +106,7 @@ def main():
         # Locate corresponding voided and mask files in the dataset
         # They usually look like BraTS-GLI-XXXXX-YYY-t1n-voided.nii.gz
         voided_matches = list(dataset_dir.rglob(f"{case_name}-t1n-voided.nii.gz"))
-        mask_matches = list(dataset_dir.rglob(f"{case_name}-mask.nii.gz"))
-
-        # Filter out 'unhealthy' masks if they exist in the same dir, we want the standard healthy/voided mask
-        mask_matches = [p for p in mask_matches if "healthy" not in p.name and "unhealthy" not in p.name]
+        mask_matches = list(dataset_dir.rglob(f"{case_name}-mask-healthy.nii.gz"))
 
         if not voided_matches or not mask_matches:
             missing += 1
